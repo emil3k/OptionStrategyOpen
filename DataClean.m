@@ -12,7 +12,7 @@ SP500   = SP500(51:end, :);
 Settlement = readtable('SettlementData.xlsx');
 SettlementPrice = table2array(Settlement(1:255, 4));
 
-%FFDaily = readtable('F-F_Research_Data_Factors_daily.CSV');
+
 
 
 
