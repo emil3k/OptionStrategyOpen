@@ -16,7 +16,7 @@ FFDaily = readtable('FFDaily.xlsx');
 FFDaily = FFDaily(19170:24515, :);
 
 PutIndex = readtable('PUT_INDEX_BBG.xlsx');
-
+PutIndex = table2array(PutIndex(50:end, 2));
 
 
 %% Set parameters and fix Rf
@@ -51,7 +51,7 @@ OptionPricesArray(:, 2) = expDatesAmended;       %Replace exp dates in Option ar
 
 
 %Clean Option Prices
-DaysInvested = 8;
+DaysInvested = 7;
 isCloseToMat = ((expDatesNumeric - datesNumeric) <= DaysInvested);    %Identify Options close to maturity
 OptionPricesArray = OptionPricesArray(isCloseToMat, :);    %Keep Option Prices of options that are close to maturity
 
@@ -103,6 +103,7 @@ save('RfDaily', 'RfDaily');
 save('SP500Trading', 'SP500Trading');
 save('DaysInvested', 'DaysInvested');
 save('FFDaily', 'FFDaily');
+save('PutIndex', 'PutIndex');
 
 return
 

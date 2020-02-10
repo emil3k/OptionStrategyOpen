@@ -11,31 +11,49 @@ load SP500Trading;
 load FFDaily
 load PutIndex
 
-%identify month changes for Option Prices matrix
-DatesTrimmed = round(OptionPricesArray(:, 1)./100);
+%Find Signal and Construction Dates
+dates_time = datetime(OptionPricesArray(:, 1), 'ConvertFrom', 'yyyyMMdd');
+dateVec    = datevec(dates_time);
+monthVec   = dateVec(:, 2);
+dayVec     = dateVec(:, 3);
+nObs       = size(OptionPricesArray, 1);
 
-isFirstDay = zeros(size(OptionPricesArray, 1), 1);
-isLastDay  = zeros(size(OptionPricesArray, 1), 1);
+isFirstDay        = zeros(nObs, 1);
+isLastDay         = zeros(nObs, 1);
+isConstructionDay = zeros(nObs, 1);
+monthVec = [0; monthVec];
 
-for i = 1:size(OptionPricesArray, 1) - 1
-    if DatesTrimmed(i) < DatesTrimmed(i + 1)
-        isFirstDay(i + 1) = 1;
-        isLastDay(i)      = 1;
+%Get Construction dates takes into account that signal dates may be
+%weekedn
+
+for i = 1:nObs - 1
+    if monthVec(i) ~= monthVec(i + 1)         %Check for month changes
+        days = dayVec(i + 1 : i + 500, 1);    %Grab arbitrary numbers of dates moving forward
+        isDayChange = zeros(length(days), 1); %Preallocate
+        
+        for j = 1:length(days) - 1            %New loop looking at day changes
+            if days(j) ~= days(j + 1)          
+                isDayChange(j + 1) = 1;
+            end
+        end
+        
+        dayList = find(isDayChange);          %Find index for day changes
+        construction = dayList(1);            %Grab index of first day changes
+        
+        isConstructionDay(construction + i) = 1; %Save construction dates
+        
     end
 end
 
-isFirstDay(1) = 1;
-isLastDay(end) = 1;
+OptionDates = OptionPricesArray(:, 1); %grab option dates
+[FirstDayList, LastDayList] = getFirstAndLastDayInPeriod(OptionDates, 2);
 
-FirstDayList = find(isFirstDay);
-LastDayList  = find(isLastDay);
-
-OptionDates = OptionPricesArray(:,1);
+ConstructionDayList = find(isConstructionDay);
 RolloverDates  = OptionDates(FirstDayList);
+ConstructionDates = OptionDates(ConstructionDayList);
 
 %Identify monthchanges for uniqe dates
 [uniqueFirstDayList, uniqueLastDayList] = getFirstAndLastDayInPeriod(datesUnique, 2);
-
 
 
 
@@ -44,42 +62,53 @@ nShorts = 5;
 nAssets = 15;
 nMonths = size(FirstDayList, 1);
 lag = 1;
-cash = 500000; %set initial margin
 PL = zeros(nMonths, 1);
 contractSize = 100;
 monthlyXsReturns = zeros(nMonths, 1);
-firstDayOptionsArray = ones(1, 9);
+SignalDayOptionsArray = ones(1, 9);
 
 %Identify Options to trade
 for i = 1:nMonths 
-    day = RolloverDates(i);  %Grab rollover date, should be lagged!!
+    SignalDay = RolloverDates(i);   %Grab signal day (lagged)
+    ConstructionDay = ConstructionDates(i); %Grab construction day (unlagged)
     
-    %Get option data on first day of new month
-    isFirstDay      = ismember(OptionPricesArray(:, 1), day); %Identify days corresponding to rollover date
-    firstDayOptions = OptionPricesArray .* isFirstDay;        %Set irrelevant prices to zero
-    firstDayOptions(firstDayOptions(:,1) == 0, :) = [];       %Delete irrelevant prices
+    %Get option data on Signal Day 
+    isFirstDay      = ismember(OptionPricesArray(:, 1), SignalDay); %Identify days corresponding to signal date
+    SignalDayOptions = OptionPricesArray .* isFirstDay;             %Set irrelevant prices to zero
+    SignalDayOptions(SignalDayOptions(:,1) == 0, :) = [];            %Delete irrelevant prices
    
+    %Get option data on construction day
+    isConstructionDay      = ismember(OptionPricesArray(:, 1), ConstructionDay); %Identify days corresponding to signal date
+    ConstructionDayOptions = OptionPricesArray .* isConstructionDay;             %Set irrelevant prices to zero
+    ConstructionDayOptions(ConstructionDayOptions(:,1) == 0, :) = [];            %Delete irrelevant prices
+    
     %Sort on OTM
-    OTM    = firstDayOptions(:, end);                         %Grab OTM Flag
-    OTM    = (OTM == 1);                                      %Create Logical
-    firstDayOptions = firstDayOptions(OTM, :);                %Kill ITM Options from portfolio construction
+    OTM    = SignalDayOptions(:, end);                               %Grab OTM Flag
+    OTM    = (OTM == 1);                                             %Create Logical
+    SignalDayOptions = SignalDayOptions(OTM, :);                     %Kill ITM and ATM Options from portfolio construction
    
-    %Sort on minimum price
-    bidPrices = firstDayOptions(:, 4);                        %Grab Bid Prices
-    PriceOverMin = (bidPrices > 0.1);                         %Identify Options with high enough bid price to trade
-    firstDayOptions = firstDayOptions(PriceOverMin, :);       %Kill options with too low price
+    %Delete options with too low price
+    bidPrices = SignalDayOptions(:, 4);                         %Grab Bid Prices
+    PriceOverMin = (bidPrices > 0.1);                           %Identify Options with high enough bid price to trade
+    SignalDayOptions = SignalDayOptions(PriceOverMin, :);       %Kill options with too low price
    
-    firstDayOptionsArray = [firstDayOptionsArray; firstDayOptions];
+    %Store all signal day options for check
+    SignalDayOptionsArray = [SignalDayOptionsArray; SignalDayOptions];
     
     
-    %Grab sorting data necessary for portfolio construction
-    IV           = firstDayOptions(:, 7);                     %Grab Implied Volatility
-    volume       = firstDayOptions(:, 6);                     %Grab volume from first day
-    FirstDayID   = firstDayOptions(:, 8);                     %Grab ID's from first day
-    bidPrices    = firstDayOptions(:, 4);                     %Grab cleaned Bid Prices from first day
-    strikePrices = firstDayOptions(:, 3) ./1000;              %Grab strikes and divide by 1000 to match index
-    expDate      = firstDayOptions(1, 2);                     %Grab expiration date
+    %Grab sorting data necessary for signal
+    IV           = SignalDayOptions(:, 7);                     %Grab Implied Volatility
+    volume       = SignalDayOptions(:, 6);                     %Grab volume from first day
+    SignalID     = SignalDayOptions(:, 8);                     %Grab ID's from first day
+   % bidPrices    = SignalDayOptions(:, 4);                    %Grab cleaned Bid Prices from first day
    
+   
+    %Grab ID and prices from construction day
+    ConstructionID = ConstructionDayOptions(:, 8);             %Grab option IDs
+    bidPrices      = ConstructionDayOptions(:, 4);             %Grab bids
+    strikePrices   = ConstructionDayOptions(:, 3) ./1000;      %Grab strikes and divide by 1000 to match index
+    expDate        = ConstructionDayOptions(1, 2);             %Grab expiration date
+    
     %{
     %Conduct liquidity screening
     %highVolume = sort(volume, 'descend');                       %Identify 15 highest volume options
@@ -100,21 +129,28 @@ for i = 1:nMonths
     
     %}
     
-    %Liquidity Screening
-    highVolume = maxk(volume, nShorts);                       %Identify highest volume among options
-    optionListVolume = find(ismember(volume, highVolume));    %Get index of highest volume options
-
+    %Liquidity Screening 
+    highVolume = maxk(volume, nShorts);                        %Identify highest volume among options
+    optionListVolume = find(ismember(volume, highVolume));     %Get index of highest volume options
+    MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
+    
+    optionListID = find(ismember(ConstructionID, MostLiquidID)); %Get the index position of the signal day most liquid option on construction day
+    
     %Sort on Implied Volatility
+    %{
     %optionIV     = IV(optionListVolume);                      %Grab IV of most liquid options
     %highIV       = maxk(optionIV, nShorts);                   %Identify 5 highest IV options
     %optionListIV = find(ismember(IV, highIV));                %Get index of highest volume options
     %optionID     = FirstDayID(optionListIV);                  %Grab option ID of 5 highest IV of the 15 highest volume optio
     
-    bids         = bidPrices(optionListVolume);                %Grab bid prices corresponding to selected options
-    strikes      = strikePrices(optionListVolume);             %Grab strike prices for selected options
+    %}
+   
+    bids         = bidPrices(optionListID);                %Grab bid prices corresponding to selected options
+    strikes      = strikePrices(optionListID);             %Grab strike prices for selected options
+    
     
     %Get SP500 on day of portfolio construction
-    SPIndex = (SP500Trading(:, 1) == day);
+    SPIndex = (SP500Trading(:, 1) == ConstructionDay);
     SP500   = SP500Trading(:, 2);
     SP500   = SP500Trading(SPIndex);
     
@@ -130,11 +166,11 @@ for i = 1:nMonths
     PL(i)       = sum(payoff);                  %For tracking PL at settlement over time (not needed for return calculation)
     weightedMargin = weight * TotalMargin;      %Weighted margin? What do we need this for?
     
-    start = find(datesUnique == day);           %Grab start time of sold option
+    start = find(datesUnique == SignalDay);           %Grab start time of sold option
     stop  = find(datesUnique == expDate);       %Grab expiration date index
     RfInvested = prod(1 + RfDaily(start:stop)); %Compute cumulative risk free rate over time when options are sold
     
-    returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ MarginVec; %Compute returns for given month of shorted options   
+    returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
     monthlyXsReturns(i) = sum(weight .* returns);   %Save this return in MonthlyXsReturn vector
    
 end
@@ -164,6 +200,17 @@ end
 FactorsMonthly = FactorsMonthlyTotal - RfMonthly;
 PUTMonthlyXs   = PUTMonthlyTotal - RfMonthly;
 
+%Compute factor exposure
+regTable = table();
+regTable.MktRf = FactorsMonthly(:,1);
+regTable.SMB   = FactorsMonthly(:,2);
+regTable.HML   = FactorsMonthly(:,3);
+regTable.Strategy = monthlyXsReturns;
+
+
+regression = fitlm(regTable, 'Strategy ~ MktRf') % + SMB + HML')
+
+
 %% Plot Results
 %Compute equity lines
 MktXsNAV    = cumprod(1 + FactorsMonthly(:, 1));
@@ -183,11 +230,11 @@ end
 
 sharpeArithmetic = sqrt(12) .* mean(monthlyXsReturns) ./ std(monthlyXsReturns);
 
-
+%Plots
 figure(1)
 plot(dates4fig, StrategyNAV, 'k', dates4fig, MktXsNAV, 'b--', dates4fig, PUTXsNAV, 'r--')
 title(titleText);
-legend( OptionStrategyLegend, 'MktRf', 'Put Index', 'location', 'northwest')
+legend( OptionStrategyLegend, 'Mkt_Rf', 'Put Index', 'location', 'northwest')
 ylim([0.5, max(max([StrategyNAV, MktXsNAV, PUTXsNAV]))]);
 ylabel('Cumulative Excess Returns');
 yticks(0:0.5:10)
