@@ -52,7 +52,8 @@ OptionPricesArray(:, 2) = expDatesAmended;       %Replace exp dates in Option ar
 
 %Clean Option Prices
 DaysInvested = 7;
-isCloseToMat = ((expDatesNumeric - datesNumeric) <= DaysInvested);    %Identify Options close to maturity
+lag = 1;
+isCloseToMat = ((expDatesNumeric - datesNumeric) <= DaysInvested + lag);    %Identify Options close to maturity
 OptionPricesArray = OptionPricesArray(isCloseToMat, :);    %Keep Option Prices of options that are close to maturity
 
 %AMSettlement = (table2array(OptionPrices(:, end)) == 1);   %Create logical for AM-Settlement
