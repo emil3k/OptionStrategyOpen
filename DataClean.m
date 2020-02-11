@@ -51,7 +51,7 @@ OptionPricesArray(:, 2) = expDatesAmended;       %Replace exp dates in Option ar
 
 
 %Clean Option Prices
-DaysInvested = 7;
+DaysInvested = 2;
 lag = 1;
 isCloseToMat = ((expDatesNumeric - datesNumeric) <= DaysInvested + lag);    %Identify Options close to maturity
 OptionPricesArray = OptionPricesArray(isCloseToMat, :);    %Keep Option Prices of options that are close to maturity

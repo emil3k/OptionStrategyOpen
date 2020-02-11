@@ -18,7 +18,7 @@ monthVec   = dateVec(:, 2);
 dayVec     = dateVec(:, 3);
 nObs       = size(OptionPricesArray, 1);
 
-isFirstDay        = zeros(nObs, 1);
+isSignalDay        = zeros(nObs, 1);
 isLastDay         = zeros(nObs, 1);
 isConstructionDay = zeros(nObs, 1);
 monthVec = [0; monthVec];
@@ -49,7 +49,7 @@ OptionDates = OptionPricesArray(:, 1); %grab option dates
 [FirstDayList, LastDayList] = getFirstAndLastDayInPeriod(OptionDates, 2);
 
 ConstructionDayList = find(isConstructionDay);
-RolloverDates  = OptionDates(FirstDayList);
+SignalDates  = OptionDates(FirstDayList);
 ConstructionDates = OptionDates(ConstructionDayList);
 
 %Identify monthchanges for uniqe dates
@@ -58,7 +58,8 @@ ConstructionDates = OptionDates(ConstructionDayList);
 
 
 %% Portfolio Construction
-nShorts = 5;
+%nShorts = 5;
+nShortsIV = 5;
 nAssets = 15;
 nMonths = size(FirstDayList, 1);
 lag = 1;
@@ -66,15 +67,17 @@ PL = zeros(nMonths, 1);
 contractSize = 100;
 monthlyXsReturns = zeros(nMonths, 1);
 SignalDayOptionsArray = ones(1, 9);
+nOptions = zeros(nMonths, 1);
+IVSort = 0;
 
 %Identify Options to trade
 for i = 1:nMonths 
-    SignalDay = RolloverDates(i);   %Grab signal day (lagged)
+    SignalDay = SignalDates(i);   %Grab signal day (lagged)
     ConstructionDay = ConstructionDates(i); %Grab construction day (unlagged)
     
     %Get option data on Signal Day 
-    isFirstDay      = ismember(OptionPricesArray(:, 1), SignalDay); %Identify days corresponding to signal date
-    SignalDayOptions = OptionPricesArray .* isFirstDay;             %Set irrelevant prices to zero
+    isSignalDay      = ismember(OptionPricesArray(:, 1), SignalDay); %Identify days corresponding to signal date
+    SignalDayOptions = OptionPricesArray .* isSignalDay;             %Set irrelevant prices to zero
     SignalDayOptions(SignalDayOptions(:,1) == 0, :) = [];            %Delete irrelevant prices
    
     %Get option data on construction day
@@ -97,11 +100,9 @@ for i = 1:nMonths
     
     
     %Grab sorting data necessary for signal
-    IV           = SignalDayOptions(:, 7);                     %Grab Implied Volatility
-    volume       = SignalDayOptions(:, 6);                     %Grab volume from first day
-    SignalID     = SignalDayOptions(:, 8);                     %Grab ID's from first day
-   % bidPrices    = SignalDayOptions(:, 4);                    %Grab cleaned Bid Prices from first day
-   
+    SignalIV           = SignalDayOptions(:, 7);               %Grab Implied Volatility
+    SignalVolume       = SignalDayOptions(:, 6);               %Grab volume from first day
+    SignalID           = SignalDayOptions(:, 8);               %Grab ID's from first day
    
     %Grab ID and prices from construction day
     ConstructionID = ConstructionDayOptions(:, 8);             %Grab option IDs
@@ -109,70 +110,86 @@ for i = 1:nMonths
     strikePrices   = ConstructionDayOptions(:, 3) ./1000;      %Grab strikes and divide by 1000 to match index
     expDate        = ConstructionDayOptions(1, 2);             %Grab expiration date
     
-    %{
-    %Conduct liquidity screening
-    %highVolume = sort(volume, 'descend');                       %Identify 15 highest volume options
-    %nShorts = floor(0.25 .* length(highVolume));
+    %Dynamic Liquidity Screening
+    %Conduct liquidity screening 
+    highVolume = sort(SignalVolume, 'descend');
+    if length(highVolume) <= 5
+        nShortsVolume = length(highVolume);
+    else
+        nShortsVolume = floor(0.25 .* length(highVolume));
+    end
     
-    %{
-    if length(volume) > nShorts
-        if highVolume(nShorts) == highVolume(nShorts + 1)
-            duplicate = highVolume(nShorts + 1);
-            duplicateIndex = find(ismember(volume, duplicate)); 
-            volume(duplicateIndex(end)) = [];
+    %Remove duplicates at end point
+    if length(SignalVolume) > nShortsVolume
+        if highVolume(nShortsVolume) == highVolume(nShortsVolume + 1)
+            duplicate = highVolume(nShortsVolume + 1);
+            duplicateIndex = find(ismember(SignalVolume, duplicate)); 
+            SignalVolume(duplicateIndex(end)) = [];
         end
     end
-     %}
-   
-    %optionListIndex  = ismember(volume, highVolume(1:nShorts));    %Get index of highest volume options
-    %optionListVolume = find(optionListIndex);                      %Get index of highest volume option
     
-    %}
+    optionListVolume = find(ismember(SignalVolume, highVolume(1:nShortsVolume))); %Get index of highest volume option
     
-    %Liquidity Screening 
+    %Static Liquidity Screening 
+    %{
     highVolume = maxk(volume, nShorts);                        %Identify highest volume among options
     optionListVolume = find(ismember(volume, highVolume));     %Get index of highest volume options
-    MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
+    %}
     
-    optionListID = find(ismember(ConstructionID, MostLiquidID)); %Get the index position of the signal day most liquid option on construction day
+    MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
+    %Get the index position of the signal day most liquid option on construction day
     
     %Sort on Implied Volatility
-    %{
-    %optionIV     = IV(optionListVolume);                      %Grab IV of most liquid options
-    %highIV       = maxk(optionIV, nShorts);                   %Identify 5 highest IV options
-    %optionListIV = find(ismember(IV, highIV));                %Get index of highest volume options
-    %optionID     = FirstDayID(optionListIV);                  %Grab option ID of 5 highest IV of the 15 highest volume optio
+    nShortsIV    = min(nShortsVolume, 5);                     %Make sure we do not exceed 5 options in each period
+    MostLiquidIV = SignalIV(optionListVolume);                %Grab IV of most liquid options
+    highIV       = maxk(MostLiquidIV, nShortsIV);             %Identify highest IV options
+    optionListIV = find(ismember(SignalIV, highIV));          %Get index of highest volume options
+    highIVID     = SignalID(optionListIV);                    %Grab option ID of 5 highest IV of the 15 highest volume optio
     
-    %}
-   
+    if IVSort == 1   
+        optionListID = find(ismember(ConstructionID, highIVID));
+    else
+        optionListID = find(ismember(ConstructionID, MostLiquidID));
+    end
+        
     bids         = bidPrices(optionListID);                %Grab bid prices corresponding to selected options
     strikes      = strikePrices(optionListID);             %Grab strike prices for selected options
-    
     
     %Get SP500 on day of portfolio construction
     SPIndex = (SP500Trading(:, 1) == ConstructionDay);
     SP500   = SP500Trading(:, 2);
-    SP500   = SP500Trading(SPIndex);
+    SP500   = SP500(SPIndex);
     
     %Calculate margin needed
     MarginVec = bids + max(0.15 .* SP500 - (SP500 - strikes), (0.1 .* strikes)); %Compute margin needed based on formula from Interactive Brokers
     TotalMargin = sum(MarginVec);                                                %Compute total margin for all options sold
     
     %Calculate monthly account changes
-    settlePrice = ones(nShorts, 1) .* SettlementPrice(i);                        %Grab settlement price and match dimension
-    payoff      = max(zeros(nShorts, 1), strikes - settlePrice);                 %Compute settlement payoff from sold options 
+    %Check if sorting on IV or liquidity to determine matrix dim
+    if IVSort == 1
+        nShorts = nShortsIV;
+    else
+        nShorts = nShortsVolume;
+    end
+    
+    settlePrice = ones(nShorts, 1) .* SettlementPrice(i);                       %Grab settlement price and match dimension
+    payoff      = max(zeros(nShorts, 1), strikes - settlePrice);                %Compute settlement payoff from sold options 
    
     weight      = 1./nShorts;                   %Weight held in each option
     PL(i)       = sum(payoff);                  %For tracking PL at settlement over time (not needed for return calculation)
-    weightedMargin = weight * TotalMargin;      %Weighted margin? What do we need this for?
+    nOptions(i, 1) = nShorts;
     
-    start = find(datesUnique == SignalDay);           %Grab start time of sold option
-    stop  = find(datesUnique == expDate);       %Grab expiration date index
-    RfInvested = prod(1 + RfDaily(start:stop)); %Compute cumulative risk free rate over time when options are sold
+    start = find(datesUnique == SignalDay);      %Grab start time of sold option
+    stop  = find(datesUnique == expDate);        %Grab expiration date index
+    RfInvested = prod(1 + RfDaily(start:stop));  %Compute cumulative risk free rate over time when options are sold
     
-    returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
-    monthlyXsReturns(i) = sum(weight .* returns);   %Save this return in MonthlyXsReturn vector
+    
+    %returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
+    returns = ((-payoff + bids) ./ bids) .* 0.01;
+    monthlyXsReturns(i) = nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
    
+    
+    
 end
 
 %monthlyXsReturns
@@ -208,7 +225,12 @@ regTable.HML   = FactorsMonthly(:,3);
 regTable.Strategy = monthlyXsReturns;
 
 
-regression = fitlm(regTable, 'Strategy ~ MktRf') % + SMB + HML')
+regression = fitlm(regTable, 'Strategy ~ MktRf + SMB + HML')
+
+%% Drawdowns
+worst = min(monthlyXsReturns);
+best  = max(monthlyXsReturns);
+
 
 
 %% Plot Results
@@ -222,7 +244,7 @@ dates4fig   = datetime(datesUnique(uniqueFirstDayList), 'ConvertFrom', 'yyyyMMdd
 load DaysInvested
 OptionStrategyLegend = strcat({'-'}, string(DaysInvested), {' Days Before Exp'});
 
-if exist('optionIV', 'var') == 1 
+if IVSort == 1 
    titleText = {'Sorted on Implied Volatility'};
 else
    titleText = {'Sorted on Liquidity'};
@@ -234,10 +256,10 @@ sharpeArithmetic = sqrt(12) .* mean(monthlyXsReturns) ./ std(monthlyXsReturns);
 figure(1)
 plot(dates4fig, StrategyNAV, 'k', dates4fig, MktXsNAV, 'b--', dates4fig, PUTXsNAV, 'r--')
 title(titleText);
-legend( OptionStrategyLegend, 'Mkt_Rf', 'Put Index', 'location', 'northwest')
-ylim([0.5, max(max([StrategyNAV, MktXsNAV, PUTXsNAV]))]);
+legend( OptionStrategyLegend, 'MktRf', 'Put Index', 'location', 'northwest')
+%ylim([0.5, max(max([StrategyNAV, MktXsNAV, PUTXsNAV]))]);
 ylabel('Cumulative Excess Returns');
-yticks(0:0.5:10)
+%yticks(0:0.5:max(StrategyNAV))
 str = strcat({'Sharpe Ratio: '}, string(sharpeArithmetic));
 dim = [.65 .2 .3 .0];
 annotation('textbox',dim,'String',str,'FitBoxToText','on');
