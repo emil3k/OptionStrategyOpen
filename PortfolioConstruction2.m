@@ -69,6 +69,8 @@ monthlyXsReturns = zeros(nMonths, 1);
 SignalDayOptionsArray = ones(1, 9);
 nOptions = zeros(nMonths, 1);
 IVSort = 0;
+ret = zeros(nMonths, 50);
+IDMatrix = zeros(nMonths, 50);
 
 %Identify Options to trade
 for i = 1:nMonths 
@@ -97,7 +99,6 @@ for i = 1:nMonths
    
     %Store all signal day options for check
     SignalDayOptionsArray = [SignalDayOptionsArray; SignalDayOptions];
-    
     
     %Grab sorting data necessary for signal
     SignalIV           = SignalDayOptions(:, 7);               %Grab Implied Volatility
@@ -137,7 +138,7 @@ for i = 1:nMonths
     %}
     
     MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
-    %Get the index position of the signal day most liquid option on construction day
+  
     
     %Sort on Implied Volatility
     nShortsIV    = min(nShortsVolume, 5);                     %Make sure we do not exceed 5 options in each period
@@ -146,12 +147,15 @@ for i = 1:nMonths
     optionListIV = find(ismember(SignalIV, highIV));          %Get index of highest volume options
     highIVID     = SignalID(optionListIV);                    %Grab option ID of 5 highest IV of the 15 highest volume optio
     
+    %Get the index position of the most liquid/highIV option on signal day, on construction day
     if IVSort == 1   
         optionListID = find(ismember(ConstructionID, highIVID));
+        IDMatrix(i, 1:numel(highIVID)) = highIVID;
     else
         optionListID = find(ismember(ConstructionID, MostLiquidID));
+        IDMatrix(i, 1:numel(MostLiquidID)) = MostLiquidID;
     end
-        
+    
     bids         = bidPrices(optionListID);                %Grab bid prices corresponding to selected options
     strikes      = strikePrices(optionListID);             %Grab strike prices for selected options
     
@@ -185,14 +189,20 @@ for i = 1:nMonths
     
     
     %returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
-    returns = ((-payoff + bids) ./ bids) .* 0.01;
-    monthlyXsReturns(i) = nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
-   
     
+    returns = ((-payoff + bids) ./ bids);
+    exposure = 0.01;
+    
+    ret(i, 1:numel(returns)) = exposure .* returns; 
+    
+   
+    monthlyXsReturns(i) = exposure .* nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
     
 end
 
 %monthlyXsReturns
+
+return
 
 %% Compound Factor Returns
 FactorsDaily      = table2array(FFDaily(:,2:4)) ./100;

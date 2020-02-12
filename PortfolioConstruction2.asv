@@ -49,7 +49,7 @@ OptionDates = OptionPricesArray(:, 1); %grab option dates
 [FirstDayList, LastDayList] = getFirstAndLastDayInPeriod(OptionDates, 2);
 
 ConstructionDayList = find(isConstructionDay);
-RolloverDates  = OptionDates(FirstDayList);
+SignalDates  = OptionDates(FirstDayList);
 ConstructionDates = OptionDates(ConstructionDayList);
 
 %Identify monthchanges for uniqe dates
@@ -72,7 +72,7 @@ IVSort = 0;
 
 %Identify Options to trade
 for i = 1:nMonths 
-    SignalDay = RolloverDates(i);   %Grab signal day (lagged)
+    SignalDay = SignalDates(i);   %Grab signal day (lagged)
     ConstructionDay = ConstructionDates(i); %Grab construction day (unlagged)
     
     %Get option data on Signal Day 
@@ -98,11 +98,10 @@ for i = 1:nMonths
     %Store all signal day options for check
     SignalDayOptionsArray = [SignalDayOptionsArray; SignalDayOptions];
     
-    
     %Grab sorting data necessary for signal
-    SignalIV           = SignalDayOptions(:, 7);                     %Grab Implied Volatility
-    SignalVolume       = SignalDayOptions(:, 6);                     %Grab volume from first day
-    SignalID           = SignalDayOptions(:, 8);                     %Grab ID's from first day
+    SignalIV           = SignalDayOptions(:, 7);               %Grab Implied Volatility
+    SignalVolume       = SignalDayOptions(:, 6);               %Grab volume from first day
+    SignalID           = SignalDayOptions(:, 8);               %Grab ID's from first day
    
     %Grab ID and prices from construction day
     ConstructionID = ConstructionDayOptions(:, 8);             %Grab option IDs
@@ -111,8 +110,7 @@ for i = 1:nMonths
     expDate        = ConstructionDayOptions(1, 2);             %Grab expiration date
     
     %Dynamic Liquidity Screening
-    %Conduct liquidity screening
-    
+    %Conduct liquidity screening 
     highVolume = sort(SignalVolume, 'descend');
     if length(highVolume) <= 5
         nShortsVolume = length(highVolume);
@@ -138,7 +136,7 @@ for i = 1:nMonths
     %}
     
     MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
-    %Get the index position of the signal day most liquid option on construction day
+  
     
     %Sort on Implied Volatility
     nShortsIV    = min(nShortsVolume, 5);                     %Make sure we do not exceed 5 options in each period
@@ -147,6 +145,7 @@ for i = 1:nMonths
     optionListIV = find(ismember(SignalIV, highIV));          %Get index of highest volume options
     highIVID     = SignalID(optionListIV);                    %Grab option ID of 5 highest IV of the 15 highest volume optio
     
+    %Get the index position of the most liquid/highIV option on signal day, on construction day
     if IVSort == 1   
         optionListID = find(ismember(ConstructionID, highIVID));
     else
@@ -186,14 +185,16 @@ for i = 1:nMonths
     
     
     %returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
-    returns = ((-payoff + bids) ./ bids) .* 0.01;
-    monthlyXsReturns(i) = nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
-   
     
+    returns = ((-payoff + bids) ./ bids);
+    exposure = 0.01;
+    monthlyXsReturns(i) = exposure .* nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
     
 end
 
 %monthlyXsReturns
+
+return
 
 %% Compound Factor Returns
 FactorsDaily      = table2array(FFDaily(:,2:4)) ./100;
