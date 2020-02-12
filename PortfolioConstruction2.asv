@@ -11,20 +11,17 @@ load SP500Trading;
 load FFDaily
 load PutIndex
 
-%Find Signal and Construction Dates
+%Get construction dates with complicated loop
+%{
 dates_time = datetime(OptionPricesArray(:, 1), 'ConvertFrom', 'yyyyMMdd');
 dateVec    = datevec(dates_time);
 monthVec   = dateVec(:, 2);
 dayVec     = dateVec(:, 3);
 nObs       = size(OptionPricesArray, 1);
 
-isSignalDay        = zeros(nObs, 1);
-isLastDay         = zeros(nObs, 1);
 isConstructionDay = zeros(nObs, 1);
 monthVec = [0; monthVec];
 
-%Get Construction dates takes into account that signal dates may be
-%weekedn
 
 for i = 1:nObs - 1
     if monthVec(i) ~= monthVec(i + 1)         %Check for month changes
@@ -45,30 +42,42 @@ for i = 1:nObs - 1
     end
 end
 
-OptionDates = OptionPricesArray(:, 1); %grab option dates
-[FirstDayList, LastDayList] = getFirstAndLastDayInPeriod(OptionDates, 2);
+
 
 ConstructionDayList = find(isConstructionDay);
-SignalDates  = OptionDates(FirstDayList);
 ConstructionDates = OptionDates(ConstructionDayList);
+%}
 
-%Identify monthchanges for uniqe dates
+
+%Get Signal Dates and Construction dates (the smooth way)
+lag = 1;
+OptionDates  = OptionPricesArray(:, 1);                                     %grab option dates
+[FirstDayList, LastDayList] = getFirstAndLastDayInPeriod(OptionDates, 2);   %Get First and Last day of new month for option dates (this after killing dates we dont need)
+SignalDates  = OptionDates(FirstDayList);                                   %Set signal dates as first day of new month
+
+ConstructionDatesIndex = find(ismember(datesUnique, SignalDates)) + lag;    %Find construction dates index as lagged signal date
+ConstructionDates = datesUnique(ConstructionDatesIndex);                    %Grab the Construction Dates from unique date vector
+
+%Identify monthchanges for uniqe dates (for compounding later)
 [uniqueFirstDayList, uniqueLastDayList] = getFirstAndLastDayInPeriod(datesUnique, 2);
 
+return
 
-
-%% Portfolio Construction
-%nShorts = 5;
-nShortsIV = 5;
-nAssets = 15;
-nMonths = size(FirstDayList, 1);
-lag = 1;
-PL = zeros(nMonths, 1);
+%% Portfolio Construction                        
+nMonths = size(FirstDayList, 1);        
 contractSize = 100;
-monthlyXsReturns = zeros(nMonths, 1);
 SignalDayOptionsArray = ones(1, 9);
-nOptions = zeros(nMonths, 1);
-IVSort = 0;
+        
+IVSort = 1;                             %Toggle IV sort strategy
+max_nShortsIV = 1;                      %max number of Options held short in IV strategy
+
+%Preallocate arrays for later analysis
+monthlyXsReturns    = zeros(nMonths, 1);
+nOptions            = zeros(nMonths, 1);   
+PL                  = zeros(nMonths, 1);
+IndividualOptionRet = zeros(nMonths, 50);
+IDMatrix            = zeros(nMonths, 50);
+DropToKill          = zeros(nMonths, 3);
 
 %Identify Options to trade
 for i = 1:nMonths 
@@ -112,8 +121,11 @@ for i = 1:nMonths
     %Dynamic Liquidity Screening
     %Conduct liquidity screening 
     highVolume = sort(SignalVolume, 'descend');
-    if length(highVolume) <= 5
+   
+    if  length(highVolume) <= 5
         nShortsVolume = length(highVolume);
+    elseif length(highVolume) < 20
+        nShortsVolume = 5;
     else
         nShortsVolume = floor(0.25 .* length(highVolume));
     end
@@ -135,11 +147,10 @@ for i = 1:nMonths
     optionListVolume = find(ismember(volume, highVolume));     %Get index of highest volume options
     %}
     
-    MostLiquidID  = SignalID(optionListVolume);                %Grab IDs of most liquid options 
+    MostLiquidID  = SignalID(optionListVolume);               %Grab IDs of most liquid options 
   
-    
     %Sort on Implied Volatility
-    nShortsIV    = min(nShortsVolume, 5);                     %Make sure we do not exceed 5 options in each period
+    nShortsIV    = min(nShortsVolume, max_nShortsIV);         %Make sure we do not exceed max_nShortsiV options in each period
     MostLiquidIV = SignalIV(optionListVolume);                %Grab IV of most liquid options
     highIV       = maxk(MostLiquidIV, nShortsIV);             %Identify highest IV options
     optionListIV = find(ismember(SignalIV, highIV));          %Get index of highest volume options
@@ -148,23 +159,28 @@ for i = 1:nMonths
     %Get the index position of the most liquid/highIV option on signal day, on construction day
     if IVSort == 1   
         optionListID = find(ismember(ConstructionID, highIVID));
+        IDMatrix(i, 1:numel(highIVID)) = highIVID;
     else
         optionListID = find(ismember(ConstructionID, MostLiquidID));
+        IDMatrix(i, 1:numel(MostLiquidID)) = MostLiquidID;
     end
-        
+    
     bids         = bidPrices(optionListID);                %Grab bid prices corresponding to selected options
     strikes      = strikePrices(optionListID);             %Grab strike prices for selected options
-    
+   
     %Get SP500 on day of portfolio construction
     SPIndex = (SP500Trading(:, 1) == ConstructionDay);
     SP500   = SP500Trading(:, 2);
     SP500   = SP500(SPIndex);
     
+    DropToKill(i, 2)  = strikes;
+    DropToKill(i, 1)  = SP500;
+    DropToKill(i, 3)  = (SP500 - strikes) ./ SP500;
+    
     %Calculate margin needed
     MarginVec = bids + max(0.15 .* SP500 - (SP500 - strikes), (0.1 .* strikes)); %Compute margin needed based on formula from Interactive Brokers
-    TotalMargin = sum(MarginVec);                                                %Compute total margin for all options sold
     
-    %Calculate monthly account changes
+    %Calculate monthly returns
     %Check if sorting on IV or liquidity to determine matrix dim
     if IVSort == 1
         nShorts = nShortsIV;
@@ -186,15 +202,13 @@ for i = 1:nMonths
     
     %returns = (-payoff + bids .* RfInvested + MarginVec .* RfInvested - MarginVec) ./ (MarginVec); %Compute returns for given month of shorted options   
     
-    returns = ((-payoff + bids) ./ bids);
-    exposure = 0.01;
-    monthlyXsReturns(i) = exposure .* nansum(weight .* returns);   %Save this return in MonthlyXsReturn vector
+    returns = ((-payoff + bids) ./ bids);                          %Compute returns on each option
+    exposure = 0.01;                                               %Exposure to strategy
+    IndividualOptionRet(i, 1:numel(returns)) = exposure .* returns;                %Save returns in matrix for check 
+    monthlyXsReturns(i) = exposure .* nansum(weight .* returns);   %Save return in MonthlyXsReturn vector
     
 end
 
-%monthlyXsReturns
-
-return
 
 %% Compound Factor Returns
 FactorsDaily      = table2array(FFDaily(:,2:4)) ./100;
@@ -232,7 +246,6 @@ regression = fitlm(regTable, 'Strategy ~ MktRf + SMB + HML')
 %% Drawdowns
 worst = min(monthlyXsReturns);
 best  = max(monthlyXsReturns);
-
 
 
 %% Plot Results

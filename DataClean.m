@@ -49,7 +49,6 @@ OptionPrices = [Prices(:, 1:7), Prices(:, end)]; %Save data needed for return co
 OptionPricesArray = table2array(OptionPrices);   %Transform Option Prices to array
 OptionPricesArray(:, 2) = expDatesAmended;       %Replace exp dates in Option array with amended exp dates
 
-
 %Clean Option Prices
 DaysInvested = 7;
 lag = 1;
@@ -60,8 +59,8 @@ OptionPricesArray = OptionPricesArray(isCloseToMat, :);    %Keep Option Prices o
 %OptionPrices = OptionPrices(AMSettlement, :);              %Keep Option Prices of AM-settled options
 
 %Get trading dates 
-tradingDates = unique(OptionPrices(:,1));                 %Find unique dates where options will be traded
-tradingDates = table2array(tradingDates);                 %Convert to array
+tradingDates = unique(OptionPrices(:, 1));                 %Find unique dates where options will be traded
+tradingDates = table2array(tradingDates);                  %Convert to array
 tradingDatesIndex = find(ismember(datesUnique, tradingDates)); %Compare unique trading dates to unique dates and find index
 
 SP500        = table2array(SP500(:,2));
@@ -78,8 +77,8 @@ for i = 1:nTradingDays
      SP  = SP500Trading(i, 2); %Grab Index Values 
      
      isTradingDay = ismember(OptionPricesArray(:, 1), day); %Identify days corresponding to grabbed date
-     relevantPrices = OptionPricesArray .* isTradingDay;   %Set irrelevant prices to zero
-     relevantPrices(relevantPrices(:,1) == 0, :) = [];     %Delete irrelevant prices
+     relevantPrices = OptionPricesArray .* isTradingDay;    %Set irrelevant prices to zero
+     relevantPrices(relevantPrices(:,1) == 0, :) = [];      %Delete irrelevant prices
      
      nPrices = size(relevantPrices, 1);                    %Get number of relevant prices
      SPVec   = SP .* ones(nPrices, 1);                     %Create vector of SP Index value
